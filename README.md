@@ -36,9 +36,10 @@ The original repository contained 51 branches. To keep the repository manageable
 - Branches with unique commits were retained under a `historic/` prefix
 - All other branches, whose commits were already reachable from the main line, were deleted
 - `newdevelop` (the former stable branch) was renamed to `main`
-- `main` (the active development branch) was renamed to `develop`
+- `main` (stale experiment) was renamed to `historic/develop-powerupslite`
+- `develop` is a fresh branch created from `main`
 
-**Preserved historic branches:** `historic/beta`, `historic/develop`, `historic/lite`, `historic/litedockable`, `historic/load`, `historic/master`, `historic/onerror`, `historic/smart`, `historic/smf`
+**Preserved historic branches:** `historic/beta`, `historic/develop`, `historic/develop-powerupslite`, `historic/lite`, `historic/litedockable`, `historic/load`, `historic/master`, `historic/onerror`, `historic/smart`, `historic/smf`
 
 The complete original branch set, including all 51 branches, is available in the `WhenPlugin-source.zip` archive attached to the initial recovery release.
 
