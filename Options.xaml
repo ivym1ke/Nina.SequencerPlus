@@ -139,7 +139,7 @@ You can convert individual files or all files contained in a folder, including s
                     <TextBox.Text>
                         <Binding Path="RoofStatus" UpdateSourceTrigger="LostFocus">
                             <Binding.ValidationRules>
-                                <rules:FileExistsOrEmptyRule />
+                                <rules:FileExistsRule />
                             </Binding.ValidationRules>
                         </Binding>
                     </TextBox.Text>

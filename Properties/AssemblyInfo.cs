@@ -3,8 +3,8 @@ using System.Runtime.InteropServices;
 
 [assembly: Guid("9bb66de3-b145-433c-b07b-1c432454817a")]
 
-[assembly: AssemblyVersion("3.29.0.12")]
-[assembly: AssemblyFileVersion("3.29.0.12")]
+[assembly: AssemblyVersion("4.0.0.0")]
+[assembly: AssemblyFileVersion("4.0.0.0")]
 
 [assembly: AssemblyTitle("Sequencer+")]
 [assembly: AssemblyDescription("Advanced Sequencer on steroids.\n" +
@@ -14,7 +14,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyProduct("SequencerPlus")] 
 [assembly: AssemblyCopyright("Copyright © 2026 Elveteek Sàrl - Carl Björk")]
 
-[assembly: AssemblyMetadata("MinimumApplicationVersion", "3.2.0.9001")]
+[assembly: AssemblyMetadata("MinimumApplicationVersion", "3.3.0.0")]
 
 [assembly: AssemblyMetadata("License", "MPL-2.0")]
 [assembly: AssemblyMetadata("LicenseURL", "https://www.mozilla.org/en-US/MPL/2.0/")]

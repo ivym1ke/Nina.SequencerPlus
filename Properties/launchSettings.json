@@ -1,8 +1,12 @@
 {
   "profiles": {
-    "Sequencer+": {
+    "Sequencer+ - N.I.N.A. 3.2": {
       "commandName": "Executable",
       "executablePath": "C:\\Program Files\\N.I.N.A. - Nighttime Imaging 'N' Astronomy\\NINA.exe"
+    },
+    "Sequencer+ - N.I.N.A. 3.3": {
+      "commandName": "Executable",
+      "executablePath": "C:\\Programs\\N.I.N.A. 3.3 - Nighttime Imaging 'N' Astronomy\\NINA.exe"
     }
   }
 }
