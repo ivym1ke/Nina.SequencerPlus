@@ -1,0 +1,126 @@
+# Build and release the patched Sequencer Powerups (WhenPlugin) plugin.
+#
+# Adapted from the upstream workflow on `main` (which targets the reorganised
+# SequencerPlus/ tree) for the 3.26.0.1 tree at commit c616249:
+#   - solution is When.sln, assembly is WhenPlugin
+#   - the manifest-publishing jobs are removed on purpose: this is a targeted
+#     bug-fix build for specific rigs, not something to list in the NINA
+#     plugin manifest repository.
+#
+# Triggers on a version tag (e.g. 3.26.0.2) to build + release, or manually
+# via workflow_dispatch to test the build without cutting a release.
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PLUGIN_NAME: "SequencerPowerups"
+  PLUGIN_SLN_NAME: "When"
+  PLUGIN_DLL_NAME: "WhenPlugin"
+  BASELINE_COMMIT: "c616249"
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare folders
+        run: |
+          mkdir packages
+          mkdir "packages/${{ env.PLUGIN_NAME }}"
+          mkdir verify
+
+      - name: Build .NET Assemblies (patched)
+        run: |
+          dotnet restore
+          dotnet build "${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= -p:Version=${{ github.ref_name }}
+
+      - name: Prepare package
+        run: |
+          $out = "bin/Release/net8.0-windows8.0"
+          Copy-Item "$out/${{ env.PLUGIN_DLL_NAME }}.dll" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll" -Force
+          Copy-Item "$out/${{ env.PLUGIN_DLL_NAME }}.pdb" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.pdb" -Force
+          # Runtime dependencies, matching the plugin's own post-build copy list.
+          foreach ($dep in @("NCalc.Sync.dll","NCalc.Core.dll","Parlot.dll","ExtendedNumerics.BigDecimal.dll")) {
+            Copy-Item "$out/$dep" "packages/${{ env.PLUGIN_NAME }}/$dep" -Force
+          }
+          Copy-Item "$out/${{ env.PLUGIN_DLL_NAME }}.dll" "verify/patched.dll" -Force
+
+      - name: Report assembly version and SHA256
+        run: |
+          $dll = "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll"
+          $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path $dll))
+          $asm  = [System.Reflection.AssemblyName]::GetAssemblyName((Resolve-Path $dll))
+          $hash = (Get-FileHash $dll -Algorithm SHA256).Hash
+          $size = (Get-Item $dll).Length
+          "AssemblyVersion : $($asm.Version)"       | Tee-Object -Append build-report.txt
+          "FileVersion     : $($info.FileVersion)"  | Tee-Object -Append build-report.txt
+          "SHA256          : $hash"                 | Tee-Object -Append build-report.txt
+          "Size (bytes)    : $size"                 | Tee-Object -Append build-report.txt
+          Get-Content build-report.txt >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Build baseline (unpatched c616249) for IL comparison
+        run: |
+          git checkout ${{ env.BASELINE_COMMIT }} -- When/Instructions/WhenCommon.cs Properties/AssemblyInfo.cs
+          dotnet build "${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= --no-incremental
+          Copy-Item "bin/Release/net8.0-windows8.0/${{ env.PLUGIN_DLL_NAME }}.dll" "verify/baseline.dll" -Force
+          git checkout HEAD -- When/Instructions/WhenCommon.cs Properties/AssemblyInfo.cs
+
+      - name: Decompile and diff (validation step 5.1)
+        continue-on-error: true
+        run: |
+          dotnet tool install -g ilspycmd
+          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+          ilspycmd verify/baseline.dll > verify/baseline.cs
+          ilspycmd verify/patched.dll  > verify/patched.cs
+          $d = git diff --no-index --unified=6 verify/baseline.cs verify/patched.cs
+          if ($null -eq $d) { "NO DIFFERENCES FOUND (unexpected)" } else { $d | Out-File -Encoding utf8 verify/decompile.diff }
+          "## Decompiled IL diff (baseline 3.26.0.1 -> patched 3.26.0.2)" >> $env:GITHUB_STEP_SUMMARY
+          '```diff' >> $env:GITHUB_STEP_SUMMARY
+          Get-Content verify/decompile.diff >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          exit 0
+
+      - name: Create Plugin archive and manifest
+        run: |
+          curl -LO "https://raw.githubusercontent.com/isbeorn/nina.plugin.manifests/refs/heads/main/tools/CreateManifest.ps1?raw=true"
+          pwsh CreateManifest.ps1 -file "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll" -installerUrl "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.zip" -createArchive -includeAll
+          Rename-Item -Path "manifest.json" -NewName "${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.manifest.json"
+          Rename-Item -Path "${{ env.PLUGIN_DLL_NAME }}.zip" -NewName "${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.zip"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-build
+          path: |
+            ${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.zip
+            ${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.manifest.json
+            build-report.txt
+            verify/decompile.diff
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            ./${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.zip
+            ./${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.manifest.json
+            ./build-report.txt
+            ./verify/decompile.diff
