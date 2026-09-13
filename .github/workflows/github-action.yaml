@@ -35,6 +35,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
       - name: Prepare folders
         run: |
           mkdir packages
@@ -43,8 +48,13 @@ jobs:
 
       - name: Build .NET Assemblies (patched)
         run: |
-          dotnet restore
-          dotnet build "${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= -p:Version=${{ github.ref_name }}
+          # Explicit solution: the folder holds both When.csproj and
+          # "When - Backup.csproj", so a bare restore cannot choose.
+          dotnet restore "${{ env.PLUGIN_SLN_NAME }}.sln" -v:normal
+          # No -p:Version=: GenerateAssemblyInfo is false in this tree, so it is
+          # inert, and on a workflow_dispatch run github.ref_name is a branch
+          # name, which is not a valid version string.
+          dotnet build "${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= --no-restore
 
       - name: Prepare package
         run: |
@@ -73,6 +83,7 @@ jobs:
       - name: Build baseline (unpatched c616249) for IL comparison
         run: |
           git checkout ${{ env.BASELINE_COMMIT }} -- When/Instructions/WhenCommon.cs Properties/AssemblyInfo.cs
+          dotnet restore "${{ env.PLUGIN_SLN_NAME }}.sln"
           dotnet build "${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= --no-incremental
           Copy-Item "bin/Release/net8.0-windows8.0/${{ env.PLUGIN_DLL_NAME }}.dll" "verify/baseline.dll" -Force
           git checkout HEAD -- When/Instructions/WhenCommon.cs Properties/AssemblyInfo.cs
