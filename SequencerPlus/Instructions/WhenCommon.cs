@@ -280,6 +280,14 @@ namespace NINA.Plugin.SequencerPlus {
             Logger.Trace("*When Interrupt*");
             if (!sequenceMediator.Initialized || !sequenceMediator.IsAdvancedSequenceRunning()) return; 
             if (!Interrupt) return;
+            // Fix: re-arm once the unsafe episode is over. Triggered is set on the
+            // InterruptWhen restart path (line 317 pre-patch) and cleared only inside
+            // Execute(), which that path never calls. If the monitor returns to Safe
+            // before the restarted sequence reaches an instruction boundary, Execute()
+            // never runs and Triggered latches on for the remainder of the NINA session,
+            // disabling InterruptWhen permanently.
+            if (Triggered && Check()) { Triggered = false; }
+
             if (InFlight || Triggered || Critical) {
 
                 if (RunningItem != null) {
