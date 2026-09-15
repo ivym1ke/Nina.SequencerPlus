@@ -8,8 +8,16 @@ using System.Runtime.InteropServices;
 //Should be incremented for each new release build of a plugin
 
 // Odd minor releases for Beta
-[assembly: AssemblyVersion("3.26.0.3")]
-[assembly: AssemblyFileVersion("3.26.0.3")]
+//
+// MUST stay above 4.0.0.0. NINA >= 3.3 hardcodes this plugin's Identifier in
+// NINA.Plugin.PluginCompatibilityMap with MinimumVersion "4.0.0.0", and
+// IsUpdateRequired() rejects the plugin when Version <= that. The version it
+// reads is AssemblyFileVersion (NINA.Plugin.PluginBase.Version). Anything 3.x
+// fails to load on NINA 3.3 with "The version of this plugin is not compatible
+// with the current version of N.I.N.A. Please update the plugin."
+// 4.26.0.1 keeps the 3.26.x lineage legible in the minor field.
+[assembly: AssemblyVersion("4.26.0.1")]
+[assembly: AssemblyFileVersion("4.26.0.1")]
 
 // [MANDATORY] The name of your plugingit st
 [assembly: AssemblyTitle("Sequencer Powerups")]
