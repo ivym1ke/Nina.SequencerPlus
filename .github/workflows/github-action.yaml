@@ -143,7 +143,12 @@ jobs:
           # NCalc 5 and will not compile against this tree's sources.
           git worktree add ../baseline ${{ env.BASELINE_REF }}
           dotnet restore "../baseline/${{ env.PLUGIN_SLN_NAME }}.sln"
-          dotnet build "../baseline/${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= --no-incremental
+          # NINA's Logger takes [CallerFilePath], so the source directory is baked
+          # into every log call. Map the worktree's path onto this checkout's so the
+          # IL diff shows behaviour changes instead of a few hundred path changes.
+          $main = (Get-Location).Path.TrimEnd('\')
+          $base = (Resolve-Path ../baseline).Path.TrimEnd('\')
+          dotnet build "../baseline/${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= --no-incremental "-p:PathMap=$base=$main"
           Copy-Item "../baseline/bin/Release/net8.0-windows8.0/${{ env.PLUGIN_DLL_NAME }}.dll" "verify/baseline.dll" -Force
 
       - name: Decompile and diff (validation step 5.1)
