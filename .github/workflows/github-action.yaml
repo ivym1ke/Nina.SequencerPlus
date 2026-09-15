@@ -65,11 +65,11 @@ jobs:
           # This tree pulls the Microsoft.Extensions.Logging set as well. Copy what
           # is actually produced and say so if something expected is missing, rather
           # than failing the build on one absent optional dependency.
+          # NCalc 7 needs only Logging.Abstractions; NCalc 5 dragged in the whole
+          # Microsoft.Extensions.Logging stack, which this build no longer produces.
           $deps = @("NCalc.Sync.dll","NCalc.Core.dll","NCalc.Parser.dll","NCalc.Domain.dll",
                     "Parlot.dll","ExtendedNumerics.BigDecimal.dll","System.Collections.Immutable.dll",
-                    "Microsoft.Extensions.Logging.dll","Microsoft.Extensions.Logging.Abstractions.dll",
-                    "Microsoft.Extensions.Logging.Configuration.dll","Microsoft.Extensions.Logging.Console.dll",
-                    "Microsoft.Extensions.Logging.TraceSource.dll","Microsoft.Extensions.Options.dll")
+                    "Microsoft.Extensions.Logging.Abstractions.dll")
           foreach ($dep in $deps) {
             if (Test-Path "$out/$dep") { Copy-Item "$out/$dep" "packages/${{ env.PLUGIN_NAME }}/$dep" -Force }
             else { Write-Host "note: $dep not produced by this build, skipping" }
