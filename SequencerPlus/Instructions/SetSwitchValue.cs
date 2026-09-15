@@ -30,7 +30,6 @@ using NINA.Equipment.Interfaces;
 using NINA.Equipment.Equipment.MySwitch;
 using NINA.Sequencer.SequenceItem;
 using NINA.CustomControlLibrary;
-using NCalc.Domain;
 
 namespace NINA.Plugin.SequencerPlus {
 

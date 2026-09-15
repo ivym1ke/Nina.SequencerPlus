@@ -1,27 +1,31 @@
-# This is a sample github action to build and release your plugin using a github action
-# It will run when pushing a new tag - the tag name must be your plugin version number (e.g. "1.0.0.0")
-# Replace and adjust the areas that are commented below
-# Place it into the workflow folder of your repository at .github/workflows
-
-# The action can also automatically publish your manifest
-# Fork the manifest repo from here https://github.com/isbeorn/nina.plugin.manifests and also name it "nina.plugin.manifests"
-# Additionally create a personal access token with write permissions to this fork and add it to your plugin repository secrets with key name "PAT"
+# Build and release the patched Sequencer Powerups (WhenPlugin) plugin.
+#
+# Adapted from the upstream workflow on `main` for the 3.29.x tree, carrying the
+# same fixes as the 3.26.x branch: the .NET 8 SDK is pinned, restore names the
+# solution explicitly, and artifacts are named from the built assembly version
+# rather than github.ref_name. The manifest-publishing jobs are removed on
+# purpose: this is a targeted bug-fix build, not something to list in the NINA
+# plugin manifest repository.
+#
+# Triggers on a version tag (e.g. 3.26.0.2) to build + release, or manually
+# via workflow_dispatch to test the build without cutting a release.
 name: Build and Release
 
-# Every time a new tag with the typical assembly format is pushed this will run. e.g. tag name "1.0.0.0"
 on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  PLUGIN_NAME: "Sequencer+"
+  PLUGIN_NAME: "SequencerPlus"
   PLUGIN_SLN_NAME: "SequencerPlus"
   PLUGIN_DLL_NAME: "NINA.Plugin.SequencerPlus"
-  PLUGIN_MANIFEST_PATH: "s/SequencerPlus"
+  # Previous release of this fork; the IL diff is taken against it.
+  BASELINE_REF: "3.29.0.13"
 
 jobs:
   build-and-release:
@@ -29,44 +33,150 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # In case you need more sub folders add these here
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
       - name: Prepare folders
         run: |
           mkdir packages
           mkdir "packages/${{ env.PLUGIN_NAME }}"
+          mkdir verify
 
-      - name: Build .NET Assemblies
+      - name: Build .NET Assemblies (patched)
         run: |
-          dotnet restore
-          dotnet build "${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= -p:Version=${{ github.ref_name }}
+          # Name the solution explicitly rather than relying on discovery.
+          dotnet restore "${{ env.PLUGIN_SLN_NAME }}.sln" -v:normal
+          # No -p:Version=: GenerateAssemblyInfo is false in this tree, so it is
+          # inert, and on a workflow_dispatch run github.ref_name is a branch
+          # name, which is not a valid version string.
+          dotnet build "${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= --no-restore
 
-
-      # Add all necessary files that the plugin needs to the packages folder - basically all items that are normally in your post build event on your local builds
       - name: Prepare package
         run: |
-          Copy-Item "bin/Release/net8.0-windows8.0/${{ env.PLUGIN_DLL_NAME }}.dll" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/${{ env.PLUGIN_DLL_NAME }}.pdb" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.pdb" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/NCalc.Sync.dll" "packages/${{ env.PLUGIN_NAME }}/NCalc.Sync.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/NCalc.Core.dll" "packages/${{ env.PLUGIN_NAME }}/NCalc.Core.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/Parlot.dll" "packages/${{ env.PLUGIN_NAME }}/Parlot.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/ExtendedNumerics.BigDecimal.dll" "packages/${{ env.PLUGIN_NAME }}/ExtendedNumerics.BigDecimal.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/Microsoft.Extensions.Logging.dll" "packages/${{ env.PLUGIN_NAME }}/Microsoft.Extensions.Logging.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/Microsoft.Extensions.Logging.Abstractions.dll" "packages/${{ env.PLUGIN_NAME }}/Microsoft.Extensions.Logging.Abstractions.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/Microsoft.Extensions.Logging.Configuration.dll" "packages/${{ env.PLUGIN_NAME }}/Microsoft.Extensions.Logging.Configuration.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/Microsoft.Extensions.Logging.Console.dll" "packages/${{ env.PLUGIN_NAME }}/Microsoft.Extensions.Logging.Console.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/Microsoft.Extensions.Logging.TraceSource.dll" "packages/${{ env.PLUGIN_NAME }}/Microsoft.Extensions.Logging.TraceSource.dll" -Force
-          Copy-Item "bin/Release/net8.0-windows8.0/Microsoft.Extensions.Options.dll" "packages/${{ env.PLUGIN_NAME }}/Microsoft.Extensions.Options.dll" -Force
-          
-      - name: Create Plugin archives and manifests
+          $out = "bin/Release/net8.0-windows8.0"
+          Copy-Item "$out/${{ env.PLUGIN_DLL_NAME }}.dll" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll" -Force
+          Copy-Item "$out/${{ env.PLUGIN_DLL_NAME }}.pdb" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.pdb" -Force
+          # Runtime dependencies, matching the plugin's own post-build copy list.
+          # This tree pulls the Microsoft.Extensions.Logging set as well. Copy what
+          # is actually produced and say so if something expected is missing, rather
+          # than failing the build on one absent optional dependency.
+          # NCalc 7 needs only Logging.Abstractions; NCalc 5 dragged in the whole
+          # Microsoft.Extensions.Logging stack, which this build no longer produces.
+          $deps = @("NCalc.Sync.dll","NCalc.Core.dll","NCalc.Parser.dll","NCalc.Domain.dll",
+                    "Parlot.dll","ExtendedNumerics.BigDecimal.dll","System.Collections.Immutable.dll",
+                    "Microsoft.Extensions.Logging.Abstractions.dll")
+          foreach ($dep in $deps) {
+            if (Test-Path "$out/$dep") { Copy-Item "$out/$dep" "packages/${{ env.PLUGIN_NAME }}/$dep" -Force }
+            else { Write-Host "note: $dep not produced by this build, skipping" }
+          }
+          Copy-Item "$out/${{ env.PLUGIN_DLL_NAME }}.dll" "verify/patched.dll" -Force
+
+      - name: Report assembly version and SHA256
         run: |
-          curl -LO https://raw.githubusercontent.com/isbeorn/nina.plugin.manifests/refs/heads/main/tools/CreateManifest.ps1?raw=true
-          pwsh CreateManifest.ps1 -file "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll" -installerUrl "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.zip" -createArchive -includeAll
-          Rename-Item -Path "manifest.json" -NewName "${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.manifest.json"
-          Rename-Item -Path ${{ env.PLUGIN_DLL_NAME }}.zip -NewName ${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.zip
+          $dll = "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll"
+          $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path $dll))
+          $asm  = [System.Reflection.AssemblyName]::GetAssemblyName((Resolve-Path $dll))
+          $hash = (Get-FileHash $dll -Algorithm SHA256).Hash
+          $size = (Get-Item $dll).Length
+          "AssemblyVersion : $($asm.Version)"       | Tee-Object -Append build-report.txt
+          "FileVersion     : $($info.FileVersion)"  | Tee-Object -Append build-report.txt
+          "SHA256          : $hash"                 | Tee-Object -Append build-report.txt
+          "Size (bytes)    : $size"                 | Tee-Object -Append build-report.txt
+          Get-Content build-report.txt >> $env:GITHUB_STEP_SUMMARY
+          # Name artifacts from the built assembly version, not github.ref_name:
+          # on a workflow_dispatch run ref_name is a branch name, and a "/" in it
+          # makes Rename-Item treat the target as a path. On a tag build the two
+          # are identical anyway.
+          "PLUGIN_VERSION=$($asm.Version)" >> $env:GITHUB_ENV
+
+      - name: Verify NCalc binding (assembly references and shipped versions)
+        run: |
+          function Get-AsmRefs([string]$path) {
+            $fs = [IO.File]::OpenRead((Resolve-Path $path))
+            try {
+              $pe = [System.Reflection.PortableExecutable.PEReader]::new($fs)
+              $mr = [System.Reflection.Metadata.PEReaderExtensions]::GetMetadataReader($pe)
+              foreach ($h in $mr.AssemblyReferences) {
+                $r = $mr.GetAssemblyReference($h)
+                [pscustomobject]@{ Name = $mr.GetString($r.Name); Version = $r.Version }
+              }
+            } finally { $fs.Dispose() }
+          }
+          $pkg  = "packages/${{ env.PLUGIN_NAME }}"
+          $refs = Get-AsmRefs "$pkg/${{ env.PLUGIN_DLL_NAME }}.dll" | Where-Object { $_.Name -like "NCalc*" -or $_.Name -eq "Parlot" }
+          "" | Tee-Object -Append build-report.txt
+          "Plugin assembly references:" | Tee-Object -Append build-report.txt
+          foreach ($r in $refs) { "  {0,-32} {1}" -f $r.Name, $r.Version | Tee-Object -Append build-report.txt }
+          "Shipped NCalc assemblies:" | Tee-Object -Append build-report.txt
+          foreach ($f in Get-ChildItem "$pkg/NCalc.*.dll") {
+            $an = [System.Reflection.AssemblyName]::GetAssemblyName($f.FullName)
+            $fv = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($f.FullName).FileVersion
+            "  {0,-32} asm {1}  file {2}" -f $f.Name, $an.Version, $fv | Tee-Object -Append build-report.txt
+          }
+          # NINA 3.3 bundles NCalc package 7.0.0 (assembly 7.0.0.0, file 7.0.0.2) and
+          # wins the name race in-process. The plugin must bind to that same identity.
+          $bad = @($refs | Where-Object { $_.Name -like "NCalc*" -and $_.Version.Major -ne 7 })
+          if ($bad.Count -gt 0) { throw "Plugin references non-v7 NCalc: $($bad | ForEach-Object { "$($_.Name) $($_.Version)" })" }
+          if (-not ($refs | Where-Object { $_.Name -like "NCalc*" })) { throw "Plugin has no NCalc reference at all" }
+          foreach ($f in Get-ChildItem "$pkg/NCalc.*.dll") {
+            $v = [System.Reflection.AssemblyName]::GetAssemblyName($f.FullName).Version
+            if ("$v" -ne "7.0.0.0") { throw "$($f.Name) is $v, expected 7.0.0.0 to match NINA 3.3" }
+          }
+          Get-Content build-report.txt >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Build baseline (previous release) for IL comparison
+        run: |
+          # A whole-tree worktree, not a partial checkout: the baseline pins
+          # NCalc 5 and will not compile against this tree's sources.
+          git worktree add ../baseline ${{ env.BASELINE_REF }}
+          dotnet restore "../baseline/${{ env.PLUGIN_SLN_NAME }}.sln"
+          # NINA's Logger takes [CallerFilePath], so the source directory is baked
+          # into every log call. Map the worktree's path onto this checkout's so the
+          # IL diff shows behaviour changes instead of a few hundred path changes.
+          $main = (Get-Location).Path.TrimEnd('\')
+          $base = (Resolve-Path ../baseline).Path.TrimEnd('\')
+          dotnet build "../baseline/${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= --no-incremental "-p:PathMap=$base=$main"
+          Copy-Item "../baseline/bin/Release/net8.0-windows8.0/${{ env.PLUGIN_DLL_NAME }}.dll" "verify/baseline.dll" -Force
+
+      - name: Decompile and diff (validation step 5.1)
+        continue-on-error: true
+        run: |
+          dotnet tool install -g ilspycmd
+          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+          ilspycmd verify/baseline.dll > verify/baseline.cs
+          ilspycmd verify/patched.dll  > verify/patched.cs
+          $d = git diff --no-index --unified=6 verify/baseline.cs verify/patched.cs
+          if ($null -eq $d) { "NO DIFFERENCES FOUND (unexpected)" } else { $d | Out-File -Encoding utf8 verify/decompile.diff }
+          "## Decompiled IL diff (${{ env.BASELINE_REF }} -> $env:PLUGIN_VERSION)" >> $env:GITHUB_STEP_SUMMARY
+          '```diff' >> $env:GITHUB_STEP_SUMMARY
+          Get-Content verify/decompile.diff >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          exit 0
+
+      - name: Create Plugin archive and manifest
+        run: |
+          curl -LO "https://raw.githubusercontent.com/isbeorn/nina.plugin.manifests/refs/heads/main/tools/CreateManifest.ps1?raw=true"
+          pwsh CreateManifest.ps1 -file "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll" -installerUrl "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ env.PLUGIN_DLL_NAME }}.${{ env.PLUGIN_VERSION }}.zip" -createArchive -includeAll
+          Rename-Item -Path "manifest.json" -NewName "${{ env.PLUGIN_DLL_NAME }}.${{ env.PLUGIN_VERSION }}.manifest.json"
+          Rename-Item -Path "${{ env.PLUGIN_DLL_NAME }}.zip" -NewName "${{ env.PLUGIN_DLL_NAME }}.${{ env.PLUGIN_VERSION }}.zip"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-build
+          path: |
+            ${{ env.PLUGIN_DLL_NAME }}.${{ env.PLUGIN_VERSION }}.zip
+            ${{ env.PLUGIN_DLL_NAME }}.${{ env.PLUGIN_VERSION }}.manifest.json
+            build-report.txt
+            verify/decompile.diff
 
       - name: Create Release
-        id: create_release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,74 +186,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            ./${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.zip
-            ./${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.manifest.json
-      
-      - name: Upload manifest artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: plugin-manifest
-          path: ${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.manifest.json
-
-  check-repo-exists:
-    runs-on: ubuntu-latest
-    needs: build-and-release
-    outputs:
-      exists: ${{ steps.check.outputs.exists }}
-    steps:
-      - name: Check if repo exists
-        id: check
-        run: |
-          REPO="nina.plugin.manifests"
-          OWNER="${{ github.repository_owner }}"
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            https://api.github.com/repos/$OWNER/$REPO)
-          if [ "$STATUS" -eq 200 ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-  publish-manifest:
-    runs-on: ubuntu-latest
-    needs: [check-repo-exists, build-and-release]
-    if: needs.check-repo-exists.outputs.exists == 'true'
-    steps:
-      - name: Download manifest artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: plugin-manifest
-
-      - name: Sanitize PLUGIN_NAME
-        run: echo "PLUGIN_NAME_SANITIZED=${PLUGIN_NAME//[[:space:]]/}" >> $GITHUB_ENV
-
-      - name: Clone manifest
-        run: |
-          git clone https://x-access-token:${{ secrets.PAT }}@github.com/${{ github.repository_owner }}/nina.plugin.manifests.git
-          cd nina.plugin.manifests
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "${{ env.PLUGIN_NAME_SANITIZED }}/${{ github.ref_name }}"
-
-      - name: Create manifest directory
-        run: |
-          mkdir -p "./nina.plugin.manifests/manifests/${{ env.PLUGIN_MANIFEST_PATH }}"
-
-      - name: Copy manifest file
-        run: |
-          cp "./${{ env.PLUGIN_DLL_NAME }}.${{ github.ref_name }}.manifest.json" "./nina.plugin.manifests/manifests/${{ env.PLUGIN_MANIFEST_PATH }}/manifest.${{ github.ref_name }}.json"
-          cd nina.plugin.manifests
-          git add .
-          git commit -m "Add manifest for release ${{ github.ref_name }}"
-          git push origin "${{ env.PLUGIN_NAME_SANITIZED }}/${{ github.ref_name }}"
-
-      - name: Create pull request
-        shell: bash
-        run: |
-          echo "${{ secrets.PAT }}" | gh auth login --with-token
-          gh pr create \
-            --title "Add manifest for ${{ env.PLUGIN_NAME }} ${{ github.ref_name }}" \
-            --body "Automatically generated manifest for release ${{ github.ref_name }}" \
-            --head ${{ github.repository_owner }}:${{ env.PLUGIN_NAME_SANITIZED }}/${{ github.ref_name }} \
-            --base main \
-            --repo isbeorn/nina.plugin.manifests
+            ./${{ env.PLUGIN_DLL_NAME }}.${{ env.PLUGIN_VERSION }}.zip
+            ./${{ env.PLUGIN_DLL_NAME }}.${{ env.PLUGIN_VERSION }}.manifest.json
+            ./build-report.txt
+            ./verify/decompile.diff
