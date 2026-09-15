@@ -7,7 +7,7 @@
 #     bug-fix build for specific rigs, not something to list in the NINA
 #     plugin manifest repository.
 #
-# Triggers on a version tag (e.g. 3.26.0.2) to build + release, or manually
+# Triggers on a version tag (e.g. 3.26.0.3) to build + release, or manually
 # via workflow_dispatch to test the build without cutting a release.
 name: Build and Release
 
@@ -24,7 +24,8 @@ env:
   PLUGIN_NAME: "SequencerPowerups"
   PLUGIN_SLN_NAME: "When"
   PLUGIN_DLL_NAME: "WhenPlugin"
-  BASELINE_COMMIT: "c616249"
+  # Previous release of this fork; the IL diff is taken against it.
+  BASELINE_REF: "3.26.0.2"
 
 jobs:
   build-and-release:
@@ -62,8 +63,24 @@ jobs:
           Copy-Item "$out/${{ env.PLUGIN_DLL_NAME }}.dll" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll" -Force
           Copy-Item "$out/${{ env.PLUGIN_DLL_NAME }}.pdb" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.pdb" -Force
           # Runtime dependencies, matching the plugin's own post-build copy list.
-          foreach ($dep in @("NCalc.Sync.dll","NCalc.Core.dll","Parlot.dll","ExtendedNumerics.BigDecimal.dll")) {
+          # NCalc 7 splits the parser and the domain model out of NCalc.Core and
+          # adds a logging abstraction, so the list is longer than for NCalc 5.
+          foreach ($dep in @("NCalc.Sync.dll","NCalc.Core.dll","NCalc.Parser.dll","NCalc.Domain.dll",
+                             "Parlot.dll","ExtendedNumerics.BigDecimal.dll",
+                             "Microsoft.Extensions.Logging.Abstractions.dll")) {
+            if (-not (Test-Path "$out/$dep")) { throw "Expected runtime dependency $dep is missing from $out" }
             Copy-Item "$out/$dep" "packages/${{ env.PLUGIN_NAME }}/$dep" -Force
+          }
+          # Ship only if the build actually emitted it. NCalc.Core 7.0.0 pins
+          # System.Collections.Immutable 10.0.10, which is also part of the net8.0
+          # shared framework; whether the SDK copies it to the output folder
+          # depends on conflict resolution, and shipping the inbox one would be wrong.
+          foreach ($dep in @("System.Collections.Immutable.dll")) {
+            if (Test-Path "$out/$dep") {
+              Copy-Item "$out/$dep" "packages/${{ env.PLUGIN_NAME }}/$dep" -Force
+            } else {
+              "note: $dep not emitted by the build; resolved from the shared framework at runtime"
+            }
           }
           Copy-Item "$out/${{ env.PLUGIN_DLL_NAME }}.dll" "verify/patched.dll" -Force
 
@@ -85,13 +102,49 @@ jobs:
           # are identical anyway.
           "PLUGIN_VERSION=$($asm.Version)" >> $env:GITHUB_ENV
 
-      - name: Build baseline (unpatched c616249) for IL comparison
+      - name: Verify NCalc binding (assembly references and shipped versions)
         run: |
-          git checkout ${{ env.BASELINE_COMMIT }} -- When/Instructions/WhenCommon.cs Properties/AssemblyInfo.cs
-          dotnet restore "${{ env.PLUGIN_SLN_NAME }}.sln"
-          dotnet build "${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= --no-incremental
-          Copy-Item "bin/Release/net8.0-windows8.0/${{ env.PLUGIN_DLL_NAME }}.dll" "verify/baseline.dll" -Force
-          git checkout HEAD -- When/Instructions/WhenCommon.cs Properties/AssemblyInfo.cs
+          function Get-AsmRefs([string]$path) {
+            $fs = [IO.File]::OpenRead((Resolve-Path $path))
+            try {
+              $pe = [System.Reflection.PortableExecutable.PEReader]::new($fs)
+              $mr = [System.Reflection.Metadata.PEReaderExtensions]::GetMetadataReader($pe)
+              foreach ($h in $mr.AssemblyReferences) {
+                $r = $mr.GetAssemblyReference($h)
+                [pscustomobject]@{ Name = $mr.GetString($r.Name); Version = $r.Version }
+              }
+            } finally { $fs.Dispose() }
+          }
+          $pkg  = "packages/${{ env.PLUGIN_NAME }}"
+          $refs = Get-AsmRefs "$pkg/${{ env.PLUGIN_DLL_NAME }}.dll" | Where-Object { $_.Name -like "NCalc*" -or $_.Name -eq "Parlot" }
+          "" | Tee-Object -Append build-report.txt
+          "WhenPlugin.dll references:" | Tee-Object -Append build-report.txt
+          foreach ($r in $refs) { "  {0,-32} {1}" -f $r.Name, $r.Version | Tee-Object -Append build-report.txt }
+          "Shipped NCalc assemblies:" | Tee-Object -Append build-report.txt
+          foreach ($f in Get-ChildItem "$pkg/NCalc.*.dll") {
+            $an = [System.Reflection.AssemblyName]::GetAssemblyName($f.FullName)
+            $fv = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($f.FullName).FileVersion
+            "  {0,-32} asm {1}  file {2}" -f $f.Name, $an.Version, $fv | Tee-Object -Append build-report.txt
+          }
+          # NINA 3.3 bundles NCalc package 7.0.0 (assembly 7.0.0.0, file 7.0.0.2) and
+          # wins the name race in-process. The plugin must bind to that same identity.
+          $bad = @($refs | Where-Object { $_.Name -like "NCalc*" -and $_.Version.Major -ne 7 })
+          if ($bad.Count -gt 0) { throw "WhenPlugin references non-v7 NCalc: $($bad | ForEach-Object { "$($_.Name) $($_.Version)" })" }
+          if (-not ($refs | Where-Object { $_.Name -like "NCalc*" })) { throw "WhenPlugin has no NCalc reference at all" }
+          foreach ($f in Get-ChildItem "$pkg/NCalc.*.dll") {
+            $v = [System.Reflection.AssemblyName]::GetAssemblyName($f.FullName).Version
+            if ("$v" -ne "7.0.0.0") { throw "$($f.Name) is $v, expected 7.0.0.0 to match NINA 3.3" }
+          }
+          Get-Content build-report.txt >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Build baseline (previous release) for IL comparison
+        run: |
+          # A whole-tree worktree, not a partial checkout: the baseline pins
+          # NCalc 5 and will not compile against this tree's sources.
+          git worktree add ../baseline ${{ env.BASELINE_REF }}
+          dotnet restore "../baseline/${{ env.PLUGIN_SLN_NAME }}.sln"
+          dotnet build "../baseline/${{ env.PLUGIN_SLN_NAME }}.sln" -c Release -p:PostBuildEvent= --no-incremental
+          Copy-Item "../baseline/bin/Release/net8.0-windows8.0/${{ env.PLUGIN_DLL_NAME }}.dll" "verify/baseline.dll" -Force
 
       - name: Decompile and diff (validation step 5.1)
         continue-on-error: true
@@ -102,7 +155,7 @@ jobs:
           ilspycmd verify/patched.dll  > verify/patched.cs
           $d = git diff --no-index --unified=6 verify/baseline.cs verify/patched.cs
           if ($null -eq $d) { "NO DIFFERENCES FOUND (unexpected)" } else { $d | Out-File -Encoding utf8 verify/decompile.diff }
-          "## Decompiled IL diff (baseline 3.26.0.1 -> patched 3.26.0.2)" >> $env:GITHUB_STEP_SUMMARY
+          "## Decompiled IL diff (${{ env.BASELINE_REF }} -> $env:PLUGIN_VERSION)" >> $env:GITHUB_STEP_SUMMARY
           '```diff' >> $env:GITHUB_STEP_SUMMARY
           Get-Content verify/decompile.diff >> $env:GITHUB_STEP_SUMMARY
           '```' >> $env:GITHUB_STEP_SUMMARY

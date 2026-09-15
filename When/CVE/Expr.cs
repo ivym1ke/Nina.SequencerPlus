@@ -1,6 +1,5 @@
 ﻿using Google.Protobuf.WellKnownTypes;
 using NCalc;
-using NCalc.Domain;
 using NCalc.Handlers;
 using Newtonsoft.Json;
 using NINA.Astrometry;
@@ -182,8 +181,8 @@ namespace WhenPlugin.When {
                     IsExpression = true;
 
                     // Evaluate just so that we can parse the expression
-                    Expression e = new Expression(value, ExpressionOptions.IgnoreCaseAtBuiltInFunctions);
-                    e.Parameters = EmptyDictionary;
+                    Expression e = new Expression(value, ExpressionOptions.IgnoreCaseAtBuiltInFunctions,
+                                                  new ExpressionContext(EmptyDictionary));
                     IsSyntaxError = false;
                     try {
                         e.Evaluate();
@@ -197,7 +196,7 @@ namespace WhenPlugin.When {
 
                     // Find the parameters used
                     References.Clear();
-                    foreach (var p in e.GetParametersNames()) {
+                    foreach (var p in e.GetParameterNames()) {
                         References.Add(p);
                     }
 
@@ -429,12 +428,12 @@ namespace WhenPlugin.When {
         public static Random RNG = new Random();
 
 
-        public void ExtensionFunction(string name, FunctionArgs args) {
+        public void ExtensionFunction(string name, FunctionEventArgs args) {
             DateTime dt;
             try {
-                if (args.Parameters.Length > 0) {
+                if (args.Parameters.Count > 0) {
                     try {
-                        var utc = ConvertFromUnixTimestamp(Convert.ToDouble(args.Parameters[0].Evaluate()));
+                        var utc = ConvertFromUnixTimestamp(Convert.ToDouble(args.Parameters.Evaluate(0)));
                         dt = utc.ToLocalTime();
                     } catch (Exception) {
                         dt = DateTime.MinValue;
@@ -443,15 +442,15 @@ namespace WhenPlugin.When {
                     dt = DateTime.Now;
                 }
                 if (name == "altitude") {
-                    if (args.Parameters.Length < 2) {
+                    if (args.Parameters.Count < 2) {
                         throw new ArgumentException();
                     }
                     double _longitude = WhenPlugin.GetLongitude();
                     double _latitude = WhenPlugin.GetLatitude();
                     var siderealTime = AstroUtil.GetLocalSiderealTime(DateTime.Now, _longitude);
-                    var hourAngle = AstroUtil.GetHourAngle(siderealTime, Convert.ToDouble(args.Parameters[0].Evaluate()));
+                    var hourAngle = AstroUtil.GetHourAngle(siderealTime, Convert.ToDouble(args.Parameters.Evaluate(0)));
                     var degAngle = AstroUtil.HoursToDegrees(hourAngle);
-                    args.Result = AstroUtil.GetAltitude(degAngle, _latitude, Convert.ToDouble(args.Parameters[1].Evaluate()));
+                    args.Result = AstroUtil.GetAltitude(degAngle, _latitude, Convert.ToDouble(args.Parameters.Evaluate(1)));
                 } else if (name == "now") {
                     args.Result = UnixTimeNow();
                 } else if (name == "hour") {
@@ -469,18 +468,18 @@ namespace WhenPlugin.When {
                 } else if (name == "dateTime") {
                     args.Result = 0;
                 } else if (name == "CtoF") {
-                    args.Result = 32 + (Convert.ToDouble(args.Parameters[0].Evaluate()) * 9 / 5);
+                    args.Result = 32 + (Convert.ToDouble(args.Parameters.Evaluate(0)) * 9 / 5);
                 } else if (name == "MStoMPH") {
-                    args.Result = (Convert.ToDouble(args.Parameters[0].Evaluate()) * 2.237);
+                    args.Result = (Convert.ToDouble(args.Parameters.Evaluate(0)) * 2.237);
                 } else if (name == "KPHtoMPH") {
-                    args.Result = (Convert.ToDouble(args.Parameters[0].Evaluate()) * .621);
+                    args.Result = (Convert.ToDouble(args.Parameters.Evaluate(0)) * .621);
                 } else if (name == "dateString") {
-                    if (args.Parameters.Length < 2) {
+                    if (args.Parameters.Count < 2) {
                         throw new ArgumentException();
                     }
-                    args.Result = dt.ToString((string)args.Parameters[1].Evaluate());
+                    args.Result = dt.ToString((string)args.Parameters.Evaluate(1));
                 } else if (name == "defined") {
-                    string str = Convert.ToString(args.Parameters[0].Evaluate());
+                    string str = Convert.ToString(args.Parameters.Evaluate(0));
                     ISequenceItem runningItem = WhenPlugin.GetRunningItem();
                     if (runningItem != null) {
                         args.Result = Symbol.FindSymbol(str, runningItem.Parent) != null;
@@ -488,11 +487,11 @@ namespace WhenPlugin.When {
                         args.Result = 0;
                     }
                 } else if (name == "startsWith") {
-                    string str = Convert.ToString(args.Parameters[0].Evaluate());
-                    string f = Convert.ToString(args.Parameters[1].Evaluate());
+                    string str = Convert.ToString(args.Parameters.Evaluate(0));
+                    string f = Convert.ToString(args.Parameters.Evaluate(1));
                     args.Result = str.StartsWith(f);
                 } else if (name == "length") {
-                    string arrayName = Convert.ToString(args.Parameters[0].Evaluate());
+                    string arrayName = Convert.ToString(args.Parameters.Evaluate(0));
                     Array array;
                     if (Arrays.TryGetValue(arrayName, out array)) {
                         args.Result = array.Count;
@@ -500,30 +499,30 @@ namespace WhenPlugin.When {
                         args.Result = -1;
                     }
                 } else if (name == "strLength") {
-                    var e = args.Parameters[0].Evaluate();
+                    var e = args.Parameters.Evaluate(0);
                     if (e is string es) {
                         args.Result = es.Length;
                     } else {
                         args.Result = -1;
                     }
                 } else if (name == "strConcat") {
-                    var e = args.Parameters[0].Evaluate();
-                    var i = args.Parameters[1].Evaluate();
+                    var e = args.Parameters.Evaluate(0);
+                    var i = args.Parameters.Evaluate(1);
                     if (e is string es && i is string iss) {
                         args.Result = String.Concat(es, iss);
                     } else {
                         args.Result = "";
                     }
                 } else if (name == "strAtPos") {
-                    var e = args.Parameters[0].Evaluate();
-                    var i = args.Parameters[1].Evaluate();
+                    var e = args.Parameters.Evaluate(0);
+                    var i = args.Parameters.Evaluate(1);
                     if (e is string es && i is int iint && iint >= 0 && iint < es.Length) {
                         args.Result = Convert.ToString(es[iint]);
                     } else {
                         args.Result = "";
                     }
                 } else if (name == "sumOfValues" || name == "averageOfValues") {
-                    string arrayName = Convert.ToString(args.Parameters[0].Evaluate());
+                    string arrayName = Convert.ToString(args.Parameters.Evaluate(0));
                     Array array;
                     if (Arrays.TryGetValue(arrayName, out array)) {
                         double sum = 0;
@@ -720,9 +719,9 @@ namespace WhenPlugin.When {
                         }
                     }
 
-                    Expression e = new Expression(Expression, ExpressionOptions.IgnoreCaseAtBuiltInFunctions);
+                    Expression e = new Expression(Expression, ExpressionOptions.IgnoreCaseAtBuiltInFunctions,
+                                                  new ExpressionContext(Parameters));
                     e.EvaluateFunction += ExtensionFunction;
-                    e.Parameters = Parameters;
 
                     if (e.HasErrors()) {
                         Error = "Syntax Error";
