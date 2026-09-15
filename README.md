@@ -1,4 +1,57 @@
-﻿# Sequencer+ — Community Recovery of Sequencer Powerups
+﻿# Sequencer+ — experimental personal fork
+
+> ## ⚠️ This is a 100% test fork, used only for experimentation.
+>
+> **This repository is not the Sequencer+ project.** It is one person's fork, used to build and try
+> out unvalidated changes. It is **not** an official release, it is **not** maintained, it is
+> **not** listed in the NINA plugin manifest repository, and nobody should treat a build from here
+> as supported.
+>
+> **Do not run builds from this fork on production astrophotography equipment.** The changes here
+> touch when a safety trigger re-arms and which expression engine the plugin binds to. No build from
+> this fork has ever been loaded in a running NINA instance. Getting this wrong parks telescopes.
+>
+> If you came looking for the real thing, go to the community recovery repository:
+> **[palmito9/Nina.SequencerPlus](https://github.com/palmito9/Nina.SequencerPlus)**. Everything below
+> this box is that project's documentation, kept as-is.
+
+## What is different from upstream
+
+Forked from `cb4e7ae` (3.29.0.12). Two changes, both released from this fork and both unvalidated:
+
+1. **`WhenUnsafe` re-arms after a short unsafe episode** (`3.29.0.13`).
+   `WhenCommon.InterruptWhen()` sets `Triggered = true` on the restart path, but `Triggered` is only
+   ever cleared inside `Execute()`, which that path never calls. If the monitor returns to safe
+   before the restarted sequence reaches an instruction boundary, the latch sticks for the rest of
+   the NINA session and silently disables the restart path — leaving the unsafe handler to park the
+   mount while the sequence keeps exposing. Fixed by re-arming once the condition clears:
+
+   ```csharp
+   if (Triggered && Check()) { Triggered = false; }
+   ```
+
+2. **NCalc 5.2.11 → 7.0.0** (`3.29.0.14`). NINA 3.3 ships its own NCalc 7 and wins the assembly
+   name race; NCalc 6 moved `Expression` from `NCalc.Sync` into `NCalc.Core`, so a v5-compiled
+   plugin asks for a type that is no longer there and composition fails.
+
+A separate branch, `fix/whenunsafe-triggered-latch`, carries the same two fixes on the older 3.26.x
+tree (assembly `WhenPlugin`, namespaces `WhenPlugin.When.*`) for installs that predate the
+Sequencer+ rename. That line additionally needs a `4.x` version number, because NINA 3.3 hardcodes
+the old plugin's identifier in `PluginCompatibilityMap` with a minimum version of `4.0.0.0`.
+
+### Status
+
+**Unvalidated.** The reasoning behind both changes is source-level. Neither has been exercised
+against a running NINA instance, on 3.2 or 3.3.
+
+## Provenance and licence
+
+Original plugin by **Marc Blank**, released under MPL-2.0. The community recovery that this forks
+from is [palmito9/Nina.SequencerPlus](https://github.com/palmito9/Nina.SequencerPlus). This fork is
+public to satisfy MPL-2.0 §3.2 — modified source must be available to anyone who receives a modified
+binary. That is the only reason it is public.
+
+---
 
 ## Introduction
 
@@ -96,4 +149,6 @@ Mozilla Public License 2.0 — see [LICENSE](LICENSE).
 
 ## Contributing
 
-Contributions, bug fixes, and improvements are welcome. Please open an issue or pull request.
+**Not here.** This fork is a personal scratch space and does not accept contributions. The community
+recovery project is [palmito9/Nina.SequencerPlus](https://github.com/palmito9/Nina.SequencerPlus);
+anything raised here will not reach it.
