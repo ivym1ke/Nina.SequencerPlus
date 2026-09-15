@@ -12,7 +12,6 @@ using System.Diagnostics;
 using NINA.Core.Enum;
 using NINA.Sequencer;
 using NINA.Core.Utility;
-using NCalc.Domain;
 using System.Text.RegularExpressions;
 using NINA.Equipment.Interfaces.Mediator;
 using NINA.Profile.Interfaces;
