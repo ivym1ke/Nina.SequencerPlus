@@ -30,7 +30,7 @@ env:
   PLUGIN_IDENTIFIER: "9075c999-dacb-4c24-9e14-b696a1ac9e89"
   COMPAT_MAP_FLOOR: "4.0.0.0"
   # Every NINA.* assembly reference must be exactly this.
-  EXPECTED_NINA_SDK: "3.1.2.9001"
+  EXPECTED_NINA_SDK: "3.2.0.9001"
   # Previous release of this fork; the IL diff is taken against it.
   BASELINE_REF: "3.26.0.3"
 
